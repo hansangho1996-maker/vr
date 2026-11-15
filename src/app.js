@@ -2,6 +2,9 @@ import { INSTRUMENT_PRESETS, keyName, targetFifths, tonicOfFifths, semitoneDista
 import { transposeChordText, detectKey as detectChordKey } from './chords.js';
 import { transposeMusicXml, detectKey as detectXmlKey } from './musicxml.js';
 import { SAMPLE_MUSICXML, SAMPLE_CHORDS } from './sample.js';
+import { isChordLine } from './chords.js';
+import { buildPrompt, extractJson, mergePages, buildMusicXml, contextFrom } from './omr.js';
+import { openPdf, extractText, renderPage, normalizeImage } from './pdf.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -162,6 +165,7 @@ async function readScoreFile(file) {
 }
 
 function loadXml(xmlString, name) {
+  $('omrNote').hidden = true;
   const doc = new DOMParser().parseFromString(xmlString, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) {
     showError('XML을 읽을 수 없습니다. MusicXML 파일이 맞는지 확인해 주세요.');
@@ -181,11 +185,112 @@ function loadXml(xmlString, name) {
 
 async function handleFile(file) {
   if (!file) return;
+  showError('');
   try {
+    if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') return await handlePdf(file);
+    if (/^image\//.test(file.type)) return await recognizeImages([await normalizeImage(file)], file.name);
     loadXml(await readScoreFile(file), file.name);
   } catch (e) {
     showError(e.message || String(e));
   }
+}
+
+// ---------- PDF / 사진 악보 ----------
+
+const MAX_PAGES = 12;
+let omrAbort = null;
+
+function setStatus(msg) {
+  $('omrStatus').hidden = !msg;
+  $('omrText').textContent = msg || '';
+}
+
+async function handlePdf(file) {
+  setStatus('PDF를 읽는 중…');
+  try {
+    const pdf = await openPdf(await file.arrayBuffer());
+    const text = await extractText(pdf);
+    const lines = text.split('\n');
+    const chordLines = lines.filter((l) => isChordLine(l)).length;
+    const bracketChords = (text.match(/\[[A-G][^\]\s]*\]/g) || []).length;
+    if (chordLines >= 2 || bracketChords >= 3) {
+      // 글자로 된 코드 악보 → 코드 악보 탭으로
+      setStatus('');
+      document.querySelector('.tabs [data-tab="chord"]').click();
+      el.chordIn.value = text;
+      el.fromKey.value = 'auto';
+      transposeChords();
+      fillToKeySelect();
+      $('chordNote').textContent = `"${file.name}"에서 코드 ${chordLines}줄을 읽어 왔습니다. 줄 맞춤이 어긋난 곳은 직접 고쳐 주세요.`;
+      return;
+    }
+    const n = Math.min(pdf.numPages, MAX_PAGES);
+    const images = [];
+    for (let i = 1; i <= n; i++) {
+      setStatus(`페이지 이미지 준비 중… (${i}/${n})`);
+      images.push(await renderPage(pdf, i));
+    }
+    await recognizeImages(images, file.name, pdf.numPages > MAX_PAGES ? `앞 ${MAX_PAGES}페이지만 인식했습니다.` : '');
+  } finally {
+    if (!omrAbort) setStatus('');
+  }
+}
+
+async function recognizeImages(images, name, note = '') {
+  const sample = window.claude?.use ? await window.claude.use('sample') : null;
+  if (!sample) {
+    throw new Error('스캔·오선 악보 인식은 claude.ai에서 이 페이지를 열었을 때만 쓸 수 있습니다. 글자로 된 코드 악보 PDF는 어디서나 됩니다.');
+  }
+  const limits = await sample.limits().catch(() => null);
+  if (!limits?.images) throw new Error('이 화면에서는 악보 이미지를 Claude에게 보낼 수 없습니다.');
+
+  showPages(images);
+  omrAbort = new AbortController();
+  const results = [];
+  let context = '';
+  try {
+    for (let i = 0; i < images.length; i++) {
+      const label = images.length > 1 ? ` (${i + 1}/${images.length} 페이지)` : '';
+      setStatus(`악보를 읽는 중${label}… 페이지당 1~2분 걸릴 수 있어요.`);
+      const { text } = await sample(buildPrompt({ page: i + 1, pages: images.length, context }), {
+        images: [images[i]],
+        modelTier: 'complex',
+        signal: omrAbort.signal,
+        onText: ({ text: t }) => setStatus(`악보를 받아 적는 중${label}… ${Math.round(t.length / 100) / 10}k자`),
+      });
+      const score = extractJson(text);
+      results.push(score);
+      context = contextFrom(score);
+    }
+  } catch (e) {
+    const msg = {
+      cancelled: '악보 인식을 멈췄습니다.',
+      not_granted: 'Claude 사용을 허용하지 않아 악보를 인식할 수 없습니다.',
+      rate_limited: '요청이 너무 많습니다. 잠시 뒤 다시 시도해 주세요.',
+      image_rejected: '이미지를 보낼 수 없습니다 (형식이나 크기 문제).',
+    }[e?.code] || `악보 인식에 실패했습니다: ${e?.message || e}`;
+    if (!results.length) { setStatus(''); omrAbort = null; throw new Error(msg); }
+    note = `${msg} 인식된 ${results.length}페이지만 보여 드립니다. ${note}`;
+  }
+  omrAbort = null;
+  setStatus('');
+  const xml = buildMusicXml(mergePages(results));
+  loadXml(xml, name.replace(/\.[^.]+$/, '') + '.musicxml');
+  $('omrNote').hidden = false;
+  $('omrNote').textContent = `자동 인식 결과입니다. 음표가 틀린 곳이 있을 수 있으니 아래 원본 페이지와 비교해 주세요. ${note}`.trim();
+}
+
+function showPages(blobs) {
+  const box = $('pages');
+  box.querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
+  box.innerHTML = '';
+  for (const b of blobs) {
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(b);
+    img.alt = '원본 악보 페이지';
+    box.appendChild(img);
+  }
+  $('pagesBox').hidden = false;
 }
 
 function setView(v) {
@@ -297,7 +402,8 @@ el.file.addEventListener('change', () => handleFile(el.file.files[0]));
 ['dragenter', 'dragover'].forEach((t) => el.drop.addEventListener(t, (e) => { e.preventDefault(); el.drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((t) => el.drop.addEventListener(t, () => el.drop.classList.remove('over')));
 el.drop.addEventListener('drop', (e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); });
-$('loadSample').addEventListener('click', () => loadXml(SAMPLE_MUSICXML, '예제 멜로디.musicxml'));
+$('loadSample').addEventListener('click', () => { $('pagesBox').hidden = true; loadXml(SAMPLE_MUSICXML, '예제 멜로디.musicxml'); });
+$('omrStop').addEventListener('click', () => omrAbort?.abort());
 el.viewResult.addEventListener('click', () => setView('result'));
 el.viewOriginal.addEventListener('click', () => setView('original'));
 $('download').addEventListener('click', download);
@@ -307,7 +413,7 @@ if (window.claude?.use) {
   $('download').textContent = 'MusicXML 다운로드 (.zip)';
 }
 
-el.chordIn.addEventListener('input', transposeChords);
+el.chordIn.addEventListener('input', () => { $('chordNote').textContent = ''; transposeChords(); });
 $('chordSample').addEventListener('click', () => { el.chordIn.value = SAMPLE_CHORDS; el.fromKey.value = 'auto'; transposeChords(); fillToKeySelect(); });
 $('chordCopy').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(el.chordOut.value); $('chordCopy').textContent = '복사됨!'; } catch { el.chordOut.select(); }

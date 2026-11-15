@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.9.9/build/opensheetmusicdisplay.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
 </head>
 <body>
   <header class="no-print">
@@ -63,9 +65,9 @@
   <main id="tab-xml" class="panel">
     <div class="filebar no-print">
       <label class="drop" id="drop">
-        <input type="file" id="file" accept=".musicxml,.xml,.mxl" hidden>
-        <strong>MusicXML 파일을 끌어다 놓거나 클릭해서 선택</strong>
-        <span>.musicxml · .xml · .mxl — MuseScore, Sibelius, Finale, Dorico 등에서 "MusicXML로 내보내기"</span>
+        <input type="file" id="file" accept=".musicxml,.xml,.mxl,.pdf,image/*" hidden>
+        <strong>악보 파일을 끌어다 놓거나 클릭해서 선택</strong>
+        <span>PDF · 악보 사진(JPG/PNG) · MusicXML(.musicxml .xml .mxl)<br>글자로 된 코드 악보 PDF는 코드 악보 탭으로 바로 옮겨지고, 오선 악보는 Claude가 읽어서 변환합니다.</span>
       </label>
       <button type="button" id="loadSample" class="ghost">예제 악보 불러오기</button>
     </div>
@@ -78,12 +80,23 @@
       <button type="button" id="download">MusicXML 다운로드</button>
       <button type="button" id="print" class="ghost">인쇄 / PDF</button>
     </div>
+    <div id="omrStatus" class="status no-print" hidden role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="omrText"></span>
+      <button type="button" id="omrStop" class="ghost small">중지</button>
+    </div>
     <p id="xmlError" class="error" hidden></p>
+    <p id="omrNote" class="note no-print" hidden></p>
     <div id="score" class="score" hidden></div>
+    <details id="pagesBox" class="pages no-print" hidden>
+      <summary>원본 페이지 보기 (인식 결과와 비교)</summary>
+      <div id="pages"></div>
+    </details>
   </main>
 
   <!-- 코드 악보 -->
   <main id="tab-chord" class="panel" hidden>
+    <p id="chordNote" class="note" aria-live="polite"></p>
     <div class="chordgrid">
       <div>
         <div class="paneltitle"><span>원본</span><button type="button" id="chordSample" class="ghost small">예제 넣기</button></div>
@@ -98,7 +111,7 @@
 
   <footer class="no-print">
     악보 렌더링: <a href="https://opensheetmusicdisplay.org/" target="_blank" rel="noopener">OpenSheetMusicDisplay</a>
-    · 스캔 이미지/PDF 악보는 먼저 MuseScore·Audiveris 등으로 MusicXML로 변환해 주세요.
+    · PDF 처리: <a href="https://mozilla.github.io/pdf.js/" target="_blank" rel="noopener">PDF.js</a>
   </footer>
 
   <script type="module" src="src/app.js"></script>

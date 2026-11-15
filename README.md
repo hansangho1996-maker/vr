@@ -6,6 +6,7 @@
 
 | 구분 | 내용 |
 |---|---|
+| **PDF · 사진 악보** | 글자로 된 코드 악보 PDF는 텍스트를 읽어 코드 악보로 바로 이조. 오선 악보 PDF·사진은 Claude가 읽어서 MusicXML로 변환 (claude.ai 아티팩트에서 열었을 때) |
 | **오선 악보 (MusicXML)** | `.musicxml` / `.xml` / `.mxl` 파일을 열어 이조 → 화면에 악보 표시, MusicXML 다운로드, 인쇄/PDF 저장 |
 | **코드 악보 (텍스트)** | 가사 위 코드 줄 형식과 `[C]가사` ChordPro 형식 모두 지원, 가사와의 칸 맞춤 유지 |
 | **이조 방법** | 목표 조 선택(위/아래/가까운 쪽) · 반음 단위 이동 · 이조악기 프리셋(B♭ 트럼펫·클라리넷, 테너/알토/바리톤 색소폰, F 호른) |
@@ -26,10 +27,13 @@ npm start
 
 그다음 브라우저에서 <http://localhost:8080> 을 엽니다. GitHub Pages 같은 정적 호스팅에 그대로 올려도 동작합니다.
 
-## 스캔 악보(이미지·PDF)는?
+## PDF · 사진 악보
 
-종이 악보 사진이나 PDF는 먼저 MusicXML로 변환해야 합니다.
-MuseScore 4의 "PDF 가져오기"나 Audiveris(무료 OMR)로 변환한 뒤 이 프로그램에 넣으면 됩니다.
+- **코드 악보 PDF**(글자를 복사할 수 있는 PDF): 글자 위치로 코드 줄과 가사 줄을 복원해 코드 악보 탭에 넣습니다.
+- **오선 악보 PDF·스캔·사진**: 페이지를 이미지로 바꿔 Claude에게 보내고(페이지당 1~2분), 돌려받은 악보 데이터를 MusicXML로 만들어 이조합니다.
+  claude.ai 아티팩트 화면에서만 동작하며, 보는 사람의 Claude 사용량을 씁니다.
+  자동 인식이라 틀린 음이 있을 수 있으니 "원본 페이지 보기"로 비교해 주세요. 성부가 복잡한 곡은 윗성부 위주로 단순화되고, 가사·셈여림은 빠집니다.
+- 정확도가 중요하면 MuseScore 4의 "PDF 가져오기"나 Audiveris로 변환한 MusicXML을 넣는 방법도 있습니다.
 
 ## 구조
 
@@ -38,6 +42,8 @@ index.html, style.css   화면
 src/theory.js           조표·음 이름·이조 계산 (핵심 로직)
 src/musicxml.js         MusicXML 이조
 src/chords.js           코드 악보 텍스트 이조
+src/pdf.js              PDF 텍스트 추출·페이지 이미지 변환 (pdf.js)
+src/omr.js              악보 인식 프롬프트, 인식 결과(JSON) → MusicXML
 src/app.js              화면 동작
 test/                   단위 테스트 (npm test)
 ```

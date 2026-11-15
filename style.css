@@ -1,0 +1,137 @@
+:root {
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --text: #1f1d1a;
+  --muted: #6b665e;
+  --border: #e2ded6;
+  --accent: #3b5bdb;
+  --accent-text: #ffffff;
+  --error: #c92a2a;
+  --score-bg: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17171a;
+    --surface: #222226;
+    --text: #ecebe8;
+    --muted: #a19d96;
+    --border: #36363c;
+    --accent: #7c95f5;
+    --accent-text: #0f1020;
+    --error: #ff8787;
+    --score-bg: #ffffff; /* 악보는 흰 바탕이 가장 읽기 좋다 */
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  max-width: 1200px;
+  padding: 24px 16px 40px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+h1 { margin: 0; font-size: 26px; }
+.sub { margin: 4px 0 20px; color: var(--muted); }
+a { color: var(--accent); }
+
+button, select, input, textarea {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button.ghost { background: transparent; color: var(--accent); }
+button.small { padding: 3px 10px; font-size: 13px; }
+select, input[type="number"] {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.tabs button {
+  background: transparent; color: var(--muted); border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 10px 14px;
+}
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field.wide { grid-column: span 2; }
+.field label { font-size: 13px; color: var(--muted); }
+.stepper { display: flex; gap: 4px; }
+.stepper button { padding: 0 12px; }
+.stepper input { text-align: center; }
+.summary { grid-column: 1 / -1; margin: 0; font-weight: 600; }
+
+.filebar { display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap; }
+.drop {
+  flex: 1 1 320px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 18px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.drop span { color: var(--muted); font-size: 13px; }
+.drop.over { border-color: var(--accent); }
+
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 16px 0 8px; }
+.fname { font-weight: 600; margin-right: auto; overflow-wrap: anywhere; }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; background: transparent; color: var(--accent); }
+.seg button:first-child { border-radius: 8px 0 0 8px; }
+.seg button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+
+.error { color: var(--error); font-weight: 600; }
+.score { background: var(--score-bg); border-radius: 12px; margin-top: 8px; overflow-x: auto; color: #000; }
+
+
+.chordgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 720px) {
+  .chordgrid { grid-template-columns: 1fr; }
+  .field.wide { grid-column: auto; }
+}
+.paneltitle { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 600; }
+textarea {
+  width: 100%;
+  min-height: 420px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  font-family: ui-monospace, "D2Coding", "Nanum Gothic Coding", Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+footer { margin-top: 32px; color: var(--muted); font-size: 13px; }
+
+@media print {
+  body { background: #fff; max-width: none; padding: 0; }
+  .no-print, .panel[hidden] { display: none !important; }
+}

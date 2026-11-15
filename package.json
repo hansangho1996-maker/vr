@@ -1,0 +1,14 @@
+{
+  "name": "sheet-music-transposer",
+  "version": "1.0.0",
+  "description": "브라우저에서 동작하는 악보 이조 프로그램 (MusicXML · 코드 악보)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "npx --yes http-server -p 8080 -c-1 ."
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.9.8"
+  }
+}

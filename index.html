@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>악보 이조기</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.9.9/build/opensheetmusicdisplay.min.js"></script>
+</head>
+<body>
+  <header class="no-print">
+    <h1>🎼 악보 이조기</h1>
+    <p class="sub">MusicXML 악보나 코드 악보를 원하는 조로 옮깁니다. 모든 처리는 브라우저 안에서만 이루어집니다.</p>
+  </header>
+
+  <nav class="tabs no-print" role="tablist">
+    <button role="tab" data-tab="xml" aria-selected="true">오선 악보 (MusicXML)</button>
+    <button role="tab" data-tab="chord" aria-selected="false">코드 악보 (텍스트)</button>
+  </nav>
+
+  <section class="controls no-print" aria-label="이조 설정">
+    <div class="field">
+      <label>원래 조</label>
+      <select id="fromKey"></select>
+    </div>
+    <div class="field">
+      <label for="toKey">목표 조</label>
+      <select id="toKey"></select>
+    </div>
+    <div class="field">
+      <label for="direction">방향</label>
+      <select id="direction">
+        <option value="near">가까운 쪽</option>
+        <option value="up">위로</option>
+        <option value="down">아래로</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="semis">반음 이동</label>
+      <div class="stepper">
+        <button type="button" id="semiDown" aria-label="반음 내리기">−</button>
+        <input id="semis" type="number" min="-36" max="36" value="0">
+        <button type="button" id="semiUp" aria-label="반음 올리기">+</button>
+      </div>
+    </div>
+    <div class="field wide">
+      <label for="preset">이조악기 프리셋</label>
+      <select id="preset"></select>
+    </div>
+    <div class="field">
+      <label for="prefer">♯ / ♭ 표기</label>
+      <select id="prefer">
+        <option value="auto">자동 (조표 적은 쪽)</option>
+        <option value="sharp">♯ 우선</option>
+        <option value="flat">♭ 우선</option>
+      </select>
+    </div>
+    <p id="summary" class="summary" aria-live="polite"></p>
+  </section>
+
+  <!-- MusicXML -->
+  <main id="tab-xml" class="panel">
+    <div class="filebar no-print">
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".musicxml,.xml,.mxl" hidden>
+        <strong>MusicXML 파일을 끌어다 놓거나 클릭해서 선택</strong>
+        <span>.musicxml · .xml · .mxl — MuseScore, Sibelius, Finale, Dorico 등에서 "MusicXML로 내보내기"</span>
+      </label>
+      <button type="button" id="loadSample" class="ghost">예제 악보 불러오기</button>
+    </div>
+    <div class="actions no-print" id="xmlActions" hidden>
+      <span id="fileName" class="fname"></span>
+      <div class="seg" role="group" aria-label="보기">
+        <button type="button" id="viewResult" aria-pressed="true">이조 결과</button>
+        <button type="button" id="viewOriginal" aria-pressed="false">원본</button>
+      </div>
+      <button type="button" id="download">MusicXML 다운로드</button>
+      <button type="button" id="print" class="ghost">인쇄 / PDF</button>
+    </div>
+    <p id="xmlError" class="error" hidden></p>
+    <div id="score" class="score" hidden></div>
+  </main>
+
+  <!-- 코드 악보 -->
+  <main id="tab-chord" class="panel" hidden>
+    <div class="chordgrid">
+      <div>
+        <div class="paneltitle"><span>원본</span><button type="button" id="chordSample" class="ghost small">예제 넣기</button></div>
+        <textarea id="chordIn" spellcheck="false" placeholder="코드 악보를 붙여 넣으세요.&#10;&#10;C        G/B       Am&#10;가사 가사 가사&#10;&#10;또는 [C]가사 [G]가사 (ChordPro)"></textarea>
+      </div>
+      <div>
+        <div class="paneltitle"><span>이조 결과</span><button type="button" id="chordCopy" class="ghost small">복사</button></div>
+        <textarea id="chordOut" spellcheck="false" readonly></textarea>
+      </div>
+    </div>
+  </main>
+
+  <footer class="no-print">
+    악보 렌더링: <a href="https://opensheetmusicdisplay.org/" target="_blank" rel="noopener">OpenSheetMusicDisplay</a>
+    · 스캔 이미지/PDF 악보는 먼저 MuseScore·Audiveris 등으로 MusicXML로 변환해 주세요.
+  </footer>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

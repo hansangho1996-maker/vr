@@ -10,7 +10,7 @@
   --score-bg: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #17171a;
     --surface: #222226;
     --text: #ecebe8;
@@ -20,14 +20,29 @@
     --accent-text: #0f1020;
     --error: #ff8787;
     --score-bg: #ffffff; /* 악보는 흰 바탕이 가장 읽기 좋다 */
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #17171a;
+    --surface: #222226;
+    --text: #ecebe8;
+    --muted: #a19d96;
+    --border: #36363c;
+    --accent: #7c95f5;
+    --accent-text: #0f1020;
+    --error: #ff8787;
+    --score-bg: #ffffff; /* 악보는 흰 바탕이 가장 읽기 좋다 */
+    color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 body {
   margin: 0 auto;
   max-width: 1200px;
-  padding: 24px 16px 40px;
+  padding-block: 24px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;

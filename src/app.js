@@ -195,14 +195,30 @@ function setView(v) {
   scheduleRender();
 }
 
-function download() {
+async function download() {
   if (!state.xml.transposed) return;
   const base = state.xml.name.replace(/\.(musicxml|xml|mxl)$/i, '');
   const to = keyName(targetFifths(state.xml.key.fifths, +el.semis.value || 0, el.prefer.value), state.xml.key.minor);
+  const filename = `${base}_${to}.musicxml`;
+
+  // claude.ai 아티팩트 안에서는 직접 다운로드가 막혀 있으므로 downloads 기능으로 zip을 저장한다.
+  const downloads = window.claude?.use ? await window.claude.use('downloads') : null;
+  if (downloads) {
+    try {
+      const zip = new window.JSZip();
+      zip.file(filename, state.xml.transposed);
+      const data = await zip.generateAsync({ type: 'blob' });
+      await downloads.save({ filename: `${base}_${to}.zip`, data });
+    } catch (e) {
+      if (e?.code !== 'declined') showError(`저장하지 못했습니다: ${e?.message || e}`);
+    }
+    return;
+  }
+
   const blob = new Blob([state.xml.transposed], { type: 'application/vnd.recordare.musicxml+xml' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${base}_${to}.musicxml`;
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
@@ -286,6 +302,10 @@ el.viewResult.addEventListener('click', () => setView('result'));
 el.viewOriginal.addEventListener('click', () => setView('original'));
 $('download').addEventListener('click', download);
 $('print').addEventListener('click', () => window.print());
+if (window.claude?.use) {
+  $('print').hidden = true; // 아티팩트 화면에서는 인쇄 창을 열 수 없음
+  $('download').textContent = 'MusicXML 다운로드 (.zip)';
+}
 
 el.chordIn.addEventListener('input', transposeChords);
 $('chordSample').addEventListener('click', () => { el.chordIn.value = SAMPLE_CHORDS; el.fromKey.value = 'auto'; transposeChords(); fillToKeySelect(); });

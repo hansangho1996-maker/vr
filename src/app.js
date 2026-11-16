@@ -3,7 +3,7 @@ import { transposeChordText, detectKey as detectChordKey } from './chords.js';
 import { transposeMusicXml, detectKey as detectXmlKey } from './musicxml.js';
 import { SAMPLE_MUSICXML, SAMPLE_CHORDS } from './sample.js';
 import { isChordLine } from './chords.js';
-import { buildSystemPrompt, buildFixPrompt, buildGroupingPrompt, parseGroups, extractJson, validateSystem, mergeSystems, buildMusicXml, contextFrom } from './omr.js';
+import { buildSystemPrompt, buildFixPrompt, buildVerifyPrompt, buildGroupingPrompt, parseGroups, extractJson, validateSystem, mergeSystems, buildMusicXml, contextFrom } from './omr.js';
 import { openPdf, extractText, renderPage, imageToCanvas, grayOf, cropToBlob, labeledPage, canvasToBlob } from './pdf.js';
 import { detectStaves, systemBands, guessGroups } from './layout.js';
 
@@ -273,10 +273,50 @@ async function splitPage(sample, canvas, pageNo, pageCount) {
   return out;
 }
 
-/** 단 하나를 받아 적고, 박자가 안 맞으면 한 번 검토시킨다. */
-async function transcribeSystem(sample, task, index, total, context, onProgress) {
-  const ask = (prompt) => sample(prompt, {
-    images: [task.blob],
+/** 받아 적은 단(JSON)을 악보 그림(PNG)으로 다시 그린다 — 원본과 나란히 비교하기 위해 */
+async function renderSystemPng(json) {
+  if (!window.opensheetmusicdisplay) return null;
+  const xml = buildMusicXml(mergeSystems([{ ...json, title: '' }]));
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-20000px;top:0;width:1800px;background:#fff';
+  document.body.appendChild(host);
+  try {
+    const o = new window.opensheetmusicdisplay.OpenSheetMusicDisplay(host, {
+      backend: 'svg', autoResize: false, drawTitle: false, drawPartNames: true, drawMeasureNumbers: true,
+    });
+    await o.load(xml);
+    o.render();
+    const svgs = [...host.querySelectorAll('svg')];
+    if (!svgs.length) return null;
+    const imgs = await Promise.all(svgs.map((svg) => new Promise((res, rej) => {
+      const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); res(img); };
+      img.onerror = rej;
+      img.src = url;
+    })));
+    const w = Math.max(...imgs.map((i) => i.width));
+    const h = imgs.reduce((a, i) => a + i.height, 0);
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    let y = 0;
+    for (const i of imgs) { ctx.drawImage(i, 0, y); y += i.height; }
+    return await new Promise((res) => c.toBlob(res, 'image/png'));
+  } catch {
+    return null;
+  } finally {
+    host.remove();
+  }
+}
+
+/** 단 하나를 받아 적고 → 박자 검사·검토 → (정밀 모드) 다시 그려서 원본과 대조·교정 */
+async function transcribeSystem(sample, task, index, total, context, onProgress, precise) {
+  const ask = (prompt, images = [task.blob]) => sample(prompt, {
+    images,
     modelTier: 'complex',
     signal: omrAbort.signal,
     onText: ({ text }) => onProgress(text.length),
@@ -285,7 +325,7 @@ async function transcribeSystem(sample, task, index, total, context, onProgress)
   const opts = { allowPickup: index === 1 };
   let problems = validateSystem(json, opts);
   if (problems.length) {
-    onProgress(0, true);
+    onProgress(0, 'fix');
     try {
       const fixed = extractJson((await ask(buildFixPrompt(json, problems.slice(0, 20)))).text);
       const after = validateSystem(fixed, opts);
@@ -294,7 +334,29 @@ async function transcribeSystem(sample, task, index, total, context, onProgress)
       if (e?.code === 'cancelled') throw e;
     }
   }
-  return { json, problems };
+  let changes = [];
+  if (precise) {
+    onProgress(0, 'verify');
+    try {
+      const rendered = await renderSystemPng(json);
+      if (rendered) {
+        const obj = extractJson((await ask(buildVerifyPrompt(json), [task.blob, rendered])).text);
+        const fixed = obj.system && obj.system.measures ? obj.system : null;
+        if (fixed) {
+          const after = validateSystem(fixed, opts);
+          // 교정 결과가 박자 검사에서 더 나빠지지 않을 때만 받아들인다
+          if (after.length <= problems.length && fixed.measures.length === json.measures.length) {
+            json = fixed;
+            problems = after;
+            changes = Array.isArray(obj.changes) ? obj.changes : [];
+          }
+        }
+      }
+    } catch (e) {
+      if (e?.code === 'cancelled') throw e;
+    }
+  }
+  return { json, problems, changes };
 }
 
 async function recognizePages(canvases, name, note = '') {
@@ -306,6 +368,7 @@ async function recognizePages(canvases, name, note = '') {
   if (!limits?.images) throw new Error('이 화면에서는 악보 이미지를 Claude에게 보낼 수 없습니다.');
 
   showPages(await Promise.all(canvases.map((c) => canvasToBlob(c))));
+  const precise = $('precise').checked && (limits.images.maxCount ?? 1) >= 2;
   omrAbort = new AbortController();
   const notes = note ? [note] : [];
   let results = [];
@@ -323,16 +386,18 @@ async function recognizePages(canvases, name, note = '') {
     const show = () => {
       const done = results.filter(Boolean).length;
       const active = status.map((s, i) => (s ? `${i + 1}번 ${s}` : '')).filter(Boolean).join(', ');
-      setStatus(`악보 읽는 중: ${done}/${tasks.length}단 완료${active ? ` (${active})` : ''} — 단마다 1~2분 걸려요.`);
+      setStatus(`악보 읽는 중: ${done}/${tasks.length}단 완료${active ? ` (${active})` : ''} — 단마다 ${precise ? '2~4' : '1~2'}분 걸려요.`);
     };
     let context = '';
     const run = async (i) => {
       status[i] = '읽는 중';
       show();
-      const r = await transcribeSystem(sample, tasks[i], i + 1, tasks.length, context, (chars, fixing) => {
-        status[i] = fixing ? '검토 중' : `받아 적는 중 ${Math.round(chars / 100) / 10}k자`;
+      let stageLabel = '받아 적기';
+      const r = await transcribeSystem(sample, tasks[i], i + 1, tasks.length, context, (chars, stage) => {
+        if (stage) stageLabel = { fix: '박자 검토', verify: '원본과 대조' }[stage];
+        status[i] = chars ? `${stageLabel} ${Math.round(chars / 100) / 10}k자` : stageLabel;
         show();
-      });
+      }, precise);
       status[i] = '';
       results[i] = r;
       show();
@@ -374,10 +439,13 @@ async function recognizePages(canvases, name, note = '') {
   if (failed.length) notes.push(`${failed.join(', ')}번째 단은 읽지 못해 빠졌습니다.`);
   if (unsure.length) notes.push(`${unsure.join(', ')}번째 단은 박자가 맞지 않는 마디가 있어요. 특히 확인해 주세요.`);
 
+  const corrected = (results || []).reduce((a, r) => a + (r && !r.failed ? r.changes.length : 0), 0);
+  if (precise) notes.push(`원본과 대조해서 ${corrected}곳을 고쳤습니다.`);
+  const base = name.replace(/(\.(pdf|png|jpe?g|webp|heic|gif|tiff?|bmp))+$/i, '');
   const merged = mergeSystems(ok);
-  if (!merged.title) merged.title = name.replace(/\.[^.]+$/, '');
+  if (!merged.title) merged.title = base;
   const xml = buildMusicXml(merged);
-  loadXml(xml, name.replace(/\.[^.]+$/, '') + '.musicxml');
+  loadXml(xml, base + '.musicxml');
   $('omrNote').hidden = false;
   $('omrNote').textContent = `자동 인식 결과입니다. 틀린 음이 있을 수 있으니 아래 원본 페이지와 비교해 주세요. ${notes.join(' ')}`.trim();
 }

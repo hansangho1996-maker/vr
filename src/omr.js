@@ -76,6 +76,22 @@ ${RULES}
 ${JSON.stringify(json)}`;
 }
 
+export function buildVerifyPrompt(json) {
+  return `두 이미지를 비교해 악보 받아쓰기를 교정하라.
+- 첫 번째 이미지: 원본 악보의 한 단 (정답)
+- 두 번째 이미지: 아래 JSON을 다시 그린 악보 (조표·음자리표·마디 순서는 같다. 줄바꿈 위치는 다를 수 있다)
+
+마디별·오선별로 하나씩 대조해서 차이를 찾아라: 음높이(덧줄 위·아래 음과 임시표 특히 주의), 리듬(점, 셋잇단, 8분/16분), 쉼표, 붙임줄·이음줄, 꾸밈음(원본에 없는 꾸밈음은 지운다), 가사 음절의 위치, 셈여림, 빠진 음.
+원본이 기준이다. 아래 형식의 JSON만 출력하라:
+{"changes": ["3마디 0번 오선: 두 번째 8분음표 F4 → Ab4", ...], "system": { 고친 전체 JSON (원래와 같은 형식) }}
+차이가 없으면 "changes"를 빈 배열로 두고 "system"에 원래 JSON을 그대로 넣는다.
+
+${RULES}
+
+받아 적은 JSON:
+${JSON.stringify(json)}`;
+}
+
 export function buildGroupingPrompt(count) {
   return `첨부한 악보 페이지의 오선마다 왼쪽에 빨간 번호(1~${count})를 붙였다.
 동시에 연주되는 오선끼리(단, system) 묶어서 아래 형식의 JSON만 출력하라.
@@ -316,6 +332,19 @@ export function buildMusicXml(input) {
     if (last && last.name.toLowerCase() === String(st.part).toLowerCase()) last.staves.push(gi);
     else parts.push({ name: String(st.part || `Part ${parts.length + 1}`), staves: [gi] });
   });
+
+  // 같은 마디·같은 박에 여러 오선이 같은 글자 지시(rit., a tempo 등)를 가지면 맨 위 오선 것만 남긴다
+  for (const m of score.measures || []) {
+    if (!Array.isArray(m.dirs)) continue;
+    const seen = new Set();
+    m.dirs = [...m.dirs].sort((a, b) => (a.staff ?? 0) - (b.staff ?? 0)).filter((d) => {
+      if (!d.text || (d.dyn && DYNAMICS.has(String(d.dyn).toLowerCase()))) return true;
+      const k = `${String(d.text).trim().toLowerCase()}@${d.beat ?? 1}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
 
   const startFifths = Math.max(-7, Math.min(7, parseInt(score.key?.fifths, 10) || 0));
   const startMode = score.key?.mode === 'minor' ? 'minor' : 'major';

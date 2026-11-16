@@ -148,3 +148,11 @@ test('박자 검사·단 묶음 응답 검증', () => {
   assert.deepEqual(parseGroups('{"systems":[[1,2],[3,4,5]]}', 5), [[0, 1], [2, 3, 4]]);
   assert.equal(parseGroups('{"systems":[[1,3],[2]]}', 3), null);
 });
+
+test('같은 글자 지시(rit. 등)가 여러 오선에 있으면 한 번만', () => {
+  const s = structuredClone(sys2);
+  s.measures[0].dirs = [{ staff: 0, beat: 3, text: 'rit.' }, { staff: 1, beat: 3, text: 'rit.' }, { staff: 2, beat: 1, dyn: 'p' }, { staff: 0, beat: 1, dyn: 'p' }];
+  const xml = buildMusicXml(mergeSystems([s]));
+  assert.equal((xml.match(/>rit\.</g) || []).length, 1);
+  assert.equal((xml.match(/<p\/>/g) || []).length, 2); // 셈여림은 오선마다 유지
+});

@@ -71,7 +71,7 @@ export async function extractText(pdf) {
 }
 
 /** 페이지를 캔버스에 그린다. 긴 변이 maxSide 픽셀 정도가 되도록 맞춘다. */
-export async function renderPage(pdf, pageNo, maxSide = 3000) {
+export async function renderPage(pdf, pageNo, maxSide = 3600) {
   const page = await pdf.getPage(pageNo);
   const base = page.getViewport({ scale: 1 });
   const scale = Math.min(5, maxSide / Math.max(base.width, base.height));
@@ -87,7 +87,7 @@ export async function renderPage(pdf, pageNo, maxSide = 3000) {
 }
 
 /** 사진 파일을 캔버스로 (긴 변 maxSide 이하) */
-export async function imageToCanvas(file, maxSide = 3000) {
+export async function imageToCanvas(file, maxSide = 3600) {
   const bmp = await createImageBitmap(file);
   const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
   const canvas = document.createElement('canvas');
@@ -122,6 +122,23 @@ export function cropToBlob(canvas, y0, y1, maxSide = 2400) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
   ctx.drawImage(canvas, 0, y0, canvas.width, h, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, 'image/png'));
+}
+
+/**
+ * 캔버스의 사각형 영역을 PNG로. Claude가 이미지를 줄이지 않도록 긴 변 1568px, 약 115만 화소 안으로 맞춘다.
+ */
+export function cropRect(canvas, x0, x1, y0, y1, maxSide = 1568, maxPixels = 1150000) {
+  const w = Math.max(1, x1 - x0);
+  const h = Math.max(1, y1 - y0);
+  const scale = Math.min(1, maxSide / Math.max(w, h), Math.sqrt(maxPixels / (w * h)));
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * scale);
+  c.height = Math.round(h * scale);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(canvas, x0, y0, w, h, 0, 0, c.width, c.height);
   return new Promise((res) => c.toBlob(res, 'image/png'));
 }
 

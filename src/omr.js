@@ -42,19 +42,30 @@ const RULES = `규칙:
   한 오선에 리듬이 다른 두 성부가 있으면(예: 위 기둥 8분음표 + 아래 기둥 온음표 베이스) 성부 두 개 [[윗성부...], [아랫성부...]]로 나눈다. 같은 리듬으로 함께 움직이는 음은 화음으로 합친다.
 - 각 성부의 길이 합은 박자표에 맞아야 한다(4/4면 온음표 하나 길이). 성부 2는 비는 구간을 쉼표로 채운다.
 - 음 "p": 실제 음 이름+옥타브(가운데 도=C4). 조표와 임시표를 반영해서 적는다(예: D♭장조의 레 → "Db4"). ♯은 #, ♭은 b, 겹올림 ##, 겹내림 bb. 화음은 배열 ["Db4","F4","Ab4"].
+  음높이 읽는 기준 — 덧줄 개수를 반드시 세라:
+    높은음자리표: 줄(아래→위) E4 G4 B4 D5 F5 / 칸 F4 A4 C5 E5 / 위로 G5(맨 윗줄 바로 위 칸), A5(덧줄 1개 위), B5, C6(덧줄 2개), D6, E6(덧줄 3개) / 아래로 D4(맨 아랫줄 바로 아래), C4(덧줄 1개), B3, A3(덧줄 2개)
+    낮은음자리표: 줄 G2 B2 D3 F3 A3 / 칸 A2 C3 E3 G3 / 위로 B3, C4(덧줄 1개), D4, E4(덧줄 2개) / 아래로 F2, E2(덧줄 1개), D2, C2(덧줄 2개), B1, A1(덧줄 3개)
+  임시표는 같은 마디의 같은 줄·칸 음에 마디 끝까지 적용된다. 제자리표(♮)를 ♯/♭과 헷갈리지 마라.
+  같은 가사·같은 리듬으로 반복되는 악구(예: 1절과 같은 선율이 다시 나오는 곳)는 서로 비교해서 일관되게 읽어라.
+- 8va/8vb(점선 괄호) 구간의 음은 실제 소리 나는 높이(한 옥타브 위/아래)로 적고, "dirs"에는 8va를 적지 않는다.
 - 쉼표: {"r": 1, "d": ...}. 길이 "d": "w" 온음표, "h" 2분, "q" 4분, "8" 8분, "16" 16분, "32" 32분. 점 "dot": 1(겹점 2), 셋잇단 "t": 1.
 - 붙임줄(같은 음이 이어짐): 앞 음에 "tie": 1. 이음줄(슬러): 시작 음에 "slur": "start", 끝 음에 "slur": "stop"(끝과 동시에 새로 시작이면 "stop-start"). 단을 넘어가면 시작만 적는다.
 - 꾸밈음(작은 음표): "g": 1 (짧은 앞꾸밈음은 "g": 1, 사선 없는 긴 앞꾸밈음은 "g": 2), 꾸며 주는 음 바로 앞에 둔다. "d"는 보이는 모양대로.
 - 늘임표 "fer": 1, 아르페지오(물결 세로선) "arp": 1, 아티큘레이션 "art": ["stacc"|"acc"|"ten"|"marc"].
 - 가사 "ly": 그 음 아래 가사를 절 순서대로 배열(1절, 2절...). 그 절에 가사가 없으면 "". 한 음절씩. 가사 줄의 "-"나 밑줄(늘임)은 적지 않는다.
-- "dirs": 셈여림("dyn": pp, p, mp, mf, f, ff, sf...)과 글자 지시("text": 빠르기말, rit., a tempo, cresc., dim., 8va 등)를 붙은 오선 번호(0부터)와 박(1부터, 소수 가능)으로 적는다.
+- "dirs": 셈여림("dyn": pp, p, mp, mf, f, ff, sf...)과 글자 지시("text": 빠르기말, rit., a tempo, cresc., dim. 등)를 붙은 오선 번호(0부터)와 박(1부터, 소수 가능)으로 적는다.
 - "chords": 오선 위 코드 이름(있을 때만).
 - 마디 중간에 조표/박자표가 바뀌면 그 마디에 "key"/"time"을 넣는다.
 - 보이는 마디를 하나도 빼지 말고, 확실하지 않아도 최선의 추측으로 채운다. 설명 없이 JSON만 출력한다.`;
 
-export function buildSystemPrompt({ index, total, context }) {
+const partsNote = (n) => (n > 1
+  ? `이미지 ${n}장은 한 단을 마디선에서 잘라 왼쪽부터 순서대로 나눈 것이다. 이어 붙여 하나의 단으로 받아 적어라 (같은 마디를 두 번 적지 말 것). 뒤쪽 이미지에는 음자리표·조표가 없으니 첫 이미지의 것을 그대로 적용한다.`
+  : '');
+
+export function buildSystemPrompt({ index, total, context, parts = 1 }) {
   return `너는 정확하기로 유명한 악보 판독 전문가다. 첨부한 이미지는 악보의 한 단(동시에 연주되는 오선 묶음)이다 (${index}/${total}번째 단).
-이미지 안의 이 단을 첫 마디부터 끝 마디까지 빠짐없이 아래 JSON 형식으로 받아 적어라.
+${partsNote(parts)}
+이 단을 첫 마디부터 끝 마디까지 빠짐없이 아래 JSON 형식으로 받아 적어라.
 
 형식 예시:
 ${SYSTEM_FORMAT}
@@ -63,8 +74,9 @@ ${RULES}
 ${context ? `\n앞 단에서 확인된 정보 (파트 이름은 같은 것을 그대로 쓴다): ${context}` : ''}`;
 }
 
-export function buildFixPrompt(json, problems) {
-  return `첨부한 악보 단을 받아 적은 JSON을 검토하라. 자동 검사에서 아래 문제가 발견되었다.
+export function buildFixPrompt(json, problems, parts = 1) {
+  return `첨부한 악보 단을 받아 적은 JSON을 검토하라. ${partsNote(parts)}
+자동 검사에서 아래 문제가 발견되었다.
 ${problems.map((p) => '- ' + p).join('\n')}
 
 이미지를 다시 꼼꼼히 보고 문제가 있는 마디를 바로잡은 전체 JSON을 같은 형식으로 출력하라. 문제가 없는 부분은 그대로 둔다.
@@ -76,12 +88,13 @@ ${RULES}
 ${JSON.stringify(json)}`;
 }
 
-export function buildVerifyPrompt(json) {
-  return `두 이미지를 비교해 악보 받아쓰기를 교정하라.
-- 첫 번째 이미지: 원본 악보의 한 단 (정답)
-- 두 번째 이미지: 아래 JSON을 다시 그린 악보 (조표·음자리표·마디 순서는 같다. 줄바꿈 위치는 다를 수 있다)
+export function buildVerifyPrompt(json, parts = 1) {
+  const orig = parts > 1 ? `1~${parts}번째 이미지: 원본 악보의 한 단을 마디선에서 나눈 것 (정답, 왼쪽부터 순서대로)` : '첫 번째 이미지: 원본 악보의 한 단 (정답)';
+  return `원본과 다시 그린 악보를 비교해 악보 받아쓰기를 교정하라.
+- ${orig}
+- 마지막 이미지: 아래 JSON을 다시 그린 악보 (조표·음자리표·마디 순서는 같다. 줄바꿈 위치는 다를 수 있다)
 
-마디별·오선별로 하나씩 대조해서 차이를 찾아라: 음높이(덧줄 위·아래 음과 임시표 특히 주의), 리듬(점, 셋잇단, 8분/16분), 쉼표, 붙임줄·이음줄, 꾸밈음(원본에 없는 꾸밈음은 지운다), 가사 음절의 위치, 셈여림, 빠진 음.
+마디별·오선별로 음표 하나하나 대조해서 차이를 찾아라: 음높이(덧줄 개수, 오선 위 높은 음, 이웃한 음 B♭/C·G♭/A♭ 혼동, 제자리표 특히 주의), 리듬(점, 셋잇단, 8분/16분), 쉼표, 붙임줄·이음줄, 꾸밈음(원본에 없는 꾸밈음은 지운다), 가사 음절의 위치, 셈여림, 빠진 음.
 원본이 기준이다. 아래 형식의 JSON만 출력하라:
 {"changes": ["3마디 0번 오선: 두 번째 8분음표 F4 → Ab4", ...], "system": { 고친 전체 JSON (원래와 같은 형식) }}
 차이가 없으면 "changes"를 빈 배열로 두고 "system"에 원래 JSON을 그대로 넣는다.
@@ -315,6 +328,7 @@ function directionXml(d, staffNo) {
   }
   const text = d.text ?? d.dyn;
   if (!text) return '';
+  if (/^\s*(8va|8vb|15ma|15mb|loco)\b/i.test(text)) return ''; // 음은 실제 높이로 적으므로 표시하지 않음
   const italic = /rit|rall|accel|tempo|cresc|dim|dolce|espr|poco|molto|sempre|^8va|^8vb/i.test(text) ? ' font-style="italic"' : '';
   const bold = !italic && /[가-힣]|andante|allegro|moderato|adagio|largo|lento|presto|vivace/i.test(text) ? ' font-weight="bold"' : '';
   return `<direction placement="${d.place || 'above'}"><direction-type><words${italic}${bold}>${esc(text)}</words></direction-type>${staff}</direction>`;

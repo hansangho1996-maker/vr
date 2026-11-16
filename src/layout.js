@@ -151,3 +151,23 @@ export function guessGroups(gray, w, h, staves, skew, xRef) {
   }
   return groups;
 }
+
+/**
+ * 단을 좌우 둘로 나눌 x 위치 (모든 오선에 공통인 마디선 중 가운데에 가장 가까운 것). 없으면 null.
+ * staffIdx: 이 단에 속한 staves의 인덱스들
+ */
+export function splitX(gray, w, h, staves, staffIdx, skew, xRef) {
+  const bars = staffIdx.map((i) => barlines(gray, w, h, staves[i], skew, xRef));
+  const tol = Math.max(3, staves[staffIdx[0]].spacing * 0.3);
+  const lo = w * 0.3;
+  const hi = w * 0.7;
+  let best = null;
+  for (const x of bars[0]) {
+    if (x < lo || x > hi) continue;
+    // 피아노·성악이 마디선을 공유하지 않을 수 있으니 절반 이상 오선에서 보이면 인정
+    const seen = bars.filter((b) => b.some((y) => Math.abs(x - y) <= tol)).length;
+    if (seen < Math.ceil(bars.length / 2)) continue;
+    if (best === null || Math.abs(x - w / 2) < Math.abs(best - w / 2)) best = x;
+  }
+  return best === null ? null : Math.round(best);
+}

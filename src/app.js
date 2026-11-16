@@ -4,8 +4,8 @@ import { transposeMusicXml, detectKey as detectXmlKey } from './musicxml.js';
 import { SAMPLE_MUSICXML, SAMPLE_CHORDS } from './sample.js';
 import { isChordLine } from './chords.js';
 import { buildSystemPrompt, buildFixPrompt, buildVerifyPrompt, buildGroupingPrompt, parseGroups, extractJson, validateSystem, mergeSystems, buildMusicXml, contextFrom } from './omr.js';
-import { openPdf, extractText, renderPage, imageToCanvas, grayOf, cropToBlob, labeledPage, canvasToBlob } from './pdf.js';
-import { detectStaves, systemBands, guessGroups } from './layout.js';
+import { openPdf, extractText, renderPage, imageToCanvas, grayOf, cropToBlob, cropRect, labeledPage, canvasToBlob } from './pdf.js';
+import { detectStaves, systemBands, guessGroups, splitX } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -246,11 +246,14 @@ const SAMPLE_ERRORS = {
 const sampleMessage = (e) => SAMPLE_ERRORS[e?.code] || `악보 인식 중 오류가 났습니다 (${e?.code || e?.message || e}).`;
 
 /** 페이지 하나를 단(system) 이미지들로 자른다. */
-async function splitPage(sample, canvas, pageNo, pageCount) {
-  const { staves, skew, xRef } = detectStaves(grayOf(canvas), canvas.width, canvas.height);
+async function splitPage(sample, canvas, pageNo, pageCount, maxParts) {
+  const gray = grayOf(canvas);
+  const W = canvas.width;
+  const H = canvas.height;
+  const { staves, skew, xRef } = detectStaves(gray, W, H);
   if (staves.length === 0) {
     // 오선을 못 찾음(기울어진 사진 등) → 페이지 통째로
-    return [{ blob: await cropToBlob(canvas, 0, canvas.height, 2400), page: pageNo }];
+    return [{ blobs: [await cropToBlob(canvas, 0, H, 2400)], page: pageNo }];
   }
   let groups = null;
   if (staves.length > 1) {
@@ -266,10 +269,18 @@ async function splitPage(sample, canvas, pageNo, pageCount) {
       if (e?.code === 'cancelled' || e?.code === 'not_granted') throw e;
     }
   }
-  if (!groups) groups = staves.length > 1 ? guessGroups(grayOf(canvas), canvas.width, canvas.height, staves, skew, xRef) : [[0]];
-  const bands = systemBands(staves, groups, canvas.width, canvas.height, skew);
+  if (!groups) groups = staves.length > 1 ? guessGroups(gray, W, H, staves, skew, xRef) : [[0]];
+  const bands = systemBands(staves, groups, W, H, skew);
   const out = [];
-  for (const b of bands) out.push({ blob: await cropToBlob(canvas, b.y0, b.y1), page: pageNo });
+  for (let k = 0; k < bands.length; k++) {
+    const b = bands[k];
+    // 단을 마디선에서 좌우로 나눠 각각 원래 해상도에 가깝게 보낸다 (Claude는 큰 이미지를 줄여서 본다)
+    const x = maxParts >= 2 ? splitX(gray, W, H, staves, groups[k], skew, xRef) : null;
+    const blobs = x
+      ? [await cropRect(canvas, 0, x + 4, b.y0, b.y1), await cropRect(canvas, x - 4, W, b.y0, b.y1)]
+      : [await cropRect(canvas, 0, W, b.y0, b.y1, 2400, 2400 * 900)];
+    out.push({ blobs, page: pageNo });
+  }
   return out;
 }
 
@@ -315,19 +326,20 @@ async function renderSystemPng(json) {
 
 /** 단 하나를 받아 적고 → 박자 검사·검토 → (정밀 모드) 다시 그려서 원본과 대조·교정 */
 async function transcribeSystem(sample, task, index, total, context, onProgress, precise) {
-  const ask = (prompt, images = [task.blob]) => sample(prompt, {
+  const parts = task.blobs.length;
+  const ask = (prompt, images = task.blobs) => sample(prompt, {
     images,
     modelTier: 'complex',
     signal: omrAbort.signal,
     onText: ({ text }) => onProgress(text.length),
   });
-  let json = extractJson((await ask(buildSystemPrompt({ index, total, context }))).text);
+  let json = extractJson((await ask(buildSystemPrompt({ index, total, context, parts }))).text);
   const opts = { allowPickup: index === 1 };
   let problems = validateSystem(json, opts);
   if (problems.length) {
     onProgress(0, 'fix');
     try {
-      const fixed = extractJson((await ask(buildFixPrompt(json, problems.slice(0, 20)))).text);
+      const fixed = extractJson((await ask(buildFixPrompt(json, problems.slice(0, 20), parts))).text);
       const after = validateSystem(fixed, opts);
       if (after.length <= problems.length) { json = fixed; problems = after; }
     } catch (e) {
@@ -340,7 +352,7 @@ async function transcribeSystem(sample, task, index, total, context, onProgress,
     try {
       const rendered = await renderSystemPng(json);
       if (rendered) {
-        const obj = extractJson((await ask(buildVerifyPrompt(json), [task.blob, rendered])).text);
+        const obj = extractJson((await ask(buildVerifyPrompt(json, parts), [...task.blobs, rendered])).text);
         const fixed = obj.system && obj.system.measures ? obj.system : null;
         if (fixed) {
           const after = validateSystem(fixed, opts);
@@ -368,7 +380,10 @@ async function recognizePages(canvases, name, note = '') {
   if (!limits?.images) throw new Error('이 화면에서는 악보 이미지를 Claude에게 보낼 수 없습니다.');
 
   showPages(await Promise.all(canvases.map((c) => canvasToBlob(c))));
-  const precise = $('precise').checked && (limits.images.maxCount ?? 1) >= 2;
+  const maxImages = limits.images.maxCount ?? 1;
+  // 정밀 인식은 (원본 조각들 + 다시 그린 그림)을 한 번에 보낸다
+  const precise = $('precise').checked && maxImages >= 2;
+  const maxParts = precise ? (maxImages >= 3 ? 2 : 1) : Math.min(2, maxImages);
   omrAbort = new AbortController();
   const notes = note ? [note] : [];
   let results = [];
@@ -377,7 +392,7 @@ async function recognizePages(canvases, name, note = '') {
     const tasks = [];
     for (let i = 0; i < canvases.length; i++) {
       setStatus(`${i + 1}/${canvases.length} 페이지: 오선 찾는 중…`);
-      tasks.push(...(await splitPage(sample, canvases[i], i + 1, canvases.length)));
+      tasks.push(...(await splitPage(sample, canvases[i], i + 1, canvases.length, maxParts)));
     }
 
     // 2) 단마다 받아 적기 (첫 단으로 파트 구성을 정한 뒤 나머지는 2개씩 동시에)

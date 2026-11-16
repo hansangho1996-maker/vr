@@ -49,6 +49,7 @@ body {
   font: 15px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 h1 { margin: 0; font-size: 26px; }
+h1 small { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 6px; }
 .sub { margin: 4px 0 20px; color: var(--muted); }
 a { color: var(--accent); }
 

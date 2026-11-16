@@ -1,5 +1,5 @@
 {
-  "name": "sheet-music-transposer",
+  "name": "ijo",
   "version": "1.0.0",
   "description": "브라우저에서 동작하는 악보 이조 프로그램 (MusicXML · 코드 악보)",
   "type": "module",

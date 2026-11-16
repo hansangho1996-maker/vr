@@ -70,11 +70,11 @@ export async function extractText(pdf) {
   return pages.join('\n\n');
 }
 
-/** 페이지를 PNG Blob으로 그린다. 긴 변이 maxSide 픽셀 정도가 되도록 맞춘다. */
-export async function renderPage(pdf, pageNo, maxSide = 2000) {
+/** 페이지를 캔버스에 그린다. 긴 변이 maxSide 픽셀 정도가 되도록 맞춘다. */
+export async function renderPage(pdf, pageNo, maxSide = 3000) {
   const page = await pdf.getPage(pageNo);
   const base = page.getViewport({ scale: 1 });
-  const scale = Math.min(4, maxSide / Math.max(base.width, base.height));
+  const scale = Math.min(5, maxSide / Math.max(base.width, base.height));
   const vp = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(vp.width);
@@ -83,11 +83,11 @@ export async function renderPage(pdf, pageNo, maxSide = 2000) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   await page.render({ canvasContext: ctx, viewport: vp }).promise;
-  return new Promise((res) => canvas.toBlob(res, 'image/png'));
+  return canvas;
 }
 
-/** 사진 파일을 적당한 크기의 JPEG/PNG로 줄인다. */
-export async function normalizeImage(file, maxSide = 2000) {
+/** 사진 파일을 캔버스로 (긴 변 maxSide 이하) */
+export async function imageToCanvas(file, maxSide = 3000) {
   const bmp = await createImageBitmap(file);
   const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
   const canvas = document.createElement('canvas');
@@ -97,5 +97,55 @@ export async function normalizeImage(file, maxSide = 2000) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  return new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
+  return canvas;
 }
+
+/** 캔버스 → 흑백 픽셀 배열 (layout.js 입력) */
+export function grayOf(canvas) {
+  const { width: w, height: h } = canvas;
+  const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const gray = new Uint8Array(w * h);
+  for (let i = 0, j = 0; j < gray.length; i += 4, j++) {
+    gray[j] = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+  }
+  return gray;
+}
+
+/** 캔버스의 y0~y1 띠를 잘라 PNG로 (너무 크면 줄임) */
+export function cropToBlob(canvas, y0, y1, maxSide = 2400) {
+  const h = Math.max(1, y1 - y0);
+  const scale = Math.min(1, maxSide / Math.max(canvas.width, h));
+  const c = document.createElement('canvas');
+  c.width = Math.round(canvas.width * scale);
+  c.height = Math.round(h * scale);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(canvas, 0, y0, canvas.width, h, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, 'image/png'));
+}
+
+/** 오선마다 빨간 번호를 붙인 축소 이미지 (단 묶기용) */
+export function labeledPage(canvas, staves, maxSide = 1600) {
+  const scale = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(canvas.width * scale);
+  c.height = Math.round(canvas.height * scale);
+  const ctx = c.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, c.width, c.height);
+  const size = Math.max(14, Math.round(staves[0].spacing * 4 * scale * 0.8));
+  ctx.font = `bold ${size}px sans-serif`;
+  ctx.textBaseline = 'middle';
+  staves.forEach((st, i) => {
+    const y = ((st.top + st.bottom) / 2) * scale;
+    const label = String(i + 1);
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(2, y - size / 2 - 2, tw + 8, size + 4);
+    ctx.fillStyle = '#e00';
+    ctx.fillText(label, 6, y);
+  });
+  return new Promise((res) => c.toBlob(res, 'image/png'));
+}
+
+export const canvasToBlob = (canvas, type = 'image/jpeg') => new Promise((res) => canvas.toBlob(res, type, 0.9));

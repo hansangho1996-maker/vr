@@ -3,8 +3,9 @@ import { transposeChordText, detectKey as detectChordKey } from './chords.js';
 import { transposeMusicXml, detectKey as detectXmlKey } from './musicxml.js';
 import { SAMPLE_MUSICXML, SAMPLE_CHORDS } from './sample.js';
 import { isChordLine } from './chords.js';
-import { buildPrompt, extractJson, mergePages, buildMusicXml, contextFrom } from './omr.js';
-import { openPdf, extractText, renderPage, normalizeImage } from './pdf.js';
+import { buildSystemPrompt, buildFixPrompt, buildGroupingPrompt, parseGroups, extractJson, validateSystem, mergeSystems, buildMusicXml, contextFrom } from './omr.js';
+import { openPdf, extractText, renderPage, imageToCanvas, grayOf, cropToBlob, labeledPage, canvasToBlob } from './pdf.js';
+import { detectStaves, systemBands, guessGroups } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -188,7 +189,7 @@ async function handleFile(file) {
   showError('');
   try {
     if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') return await handlePdf(file);
-    if (/^image\//.test(file.type)) return await recognizeImages([await normalizeImage(file)], file.name);
+    if (/^image\//.test(file.type)) return await recognizePages([await imageToCanvas(file)], file.name);
     loadXml(await readScoreFile(file), file.name);
   } catch (e) {
     showError(e.message || String(e));
@@ -225,59 +226,160 @@ async function handlePdf(file) {
       return;
     }
     const n = Math.min(pdf.numPages, MAX_PAGES);
-    const images = [];
+    const pages = [];
     for (let i = 1; i <= n; i++) {
       setStatus(`페이지 이미지 준비 중… (${i}/${n})`);
-      images.push(await renderPage(pdf, i));
+      pages.push(await renderPage(pdf, i));
     }
-    await recognizeImages(images, file.name, pdf.numPages > MAX_PAGES ? `앞 ${MAX_PAGES}페이지만 인식했습니다.` : '');
+    await recognizePages(pages, file.name, pdf.numPages > MAX_PAGES ? `앞 ${MAX_PAGES}페이지만 인식했습니다.` : '');
   } finally {
     if (!omrAbort) setStatus('');
   }
 }
 
-async function recognizeImages(images, name, note = '') {
+const SAMPLE_ERRORS = {
+  cancelled: '악보 인식을 멈췄습니다.',
+  not_granted: 'Claude 사용을 허용하지 않아 악보를 인식할 수 없습니다.',
+  rate_limited: '요청이 너무 많습니다. 잠시 뒤 다시 시도해 주세요.',
+  image_rejected: '이미지를 보낼 수 없습니다 (형식이나 크기 문제).',
+};
+const sampleMessage = (e) => SAMPLE_ERRORS[e?.code] || `악보 인식 중 오류가 났습니다 (${e?.code || e?.message || e}).`;
+
+/** 페이지 하나를 단(system) 이미지들로 자른다. */
+async function splitPage(sample, canvas, pageNo, pageCount) {
+  const { staves, skew, xRef } = detectStaves(grayOf(canvas), canvas.width, canvas.height);
+  if (staves.length === 0) {
+    // 오선을 못 찾음(기울어진 사진 등) → 페이지 통째로
+    return [{ blob: await cropToBlob(canvas, 0, canvas.height, 2400), page: pageNo }];
+  }
+  let groups = null;
+  if (staves.length > 1) {
+    setStatus(`${pageNo}/${pageCount} 페이지: 단 나누는 중…`);
+    try {
+      const { text } = await sample(buildGroupingPrompt(staves.length), {
+        images: [await labeledPage(canvas, staves)],
+        modelTier: 'default',
+        signal: omrAbort.signal,
+      });
+      groups = parseGroups(text, staves.length);
+    } catch (e) {
+      if (e?.code === 'cancelled' || e?.code === 'not_granted') throw e;
+    }
+  }
+  if (!groups) groups = staves.length > 1 ? guessGroups(grayOf(canvas), canvas.width, canvas.height, staves, skew, xRef) : [[0]];
+  const bands = systemBands(staves, groups, canvas.width, canvas.height, skew);
+  const out = [];
+  for (const b of bands) out.push({ blob: await cropToBlob(canvas, b.y0, b.y1), page: pageNo });
+  return out;
+}
+
+/** 단 하나를 받아 적고, 박자가 안 맞으면 한 번 검토시킨다. */
+async function transcribeSystem(sample, task, index, total, context, onProgress) {
+  const ask = (prompt) => sample(prompt, {
+    images: [task.blob],
+    modelTier: 'complex',
+    signal: omrAbort.signal,
+    onText: ({ text }) => onProgress(text.length),
+  });
+  let json = extractJson((await ask(buildSystemPrompt({ index, total, context }))).text);
+  const opts = { allowPickup: index === 1 };
+  let problems = validateSystem(json, opts);
+  if (problems.length) {
+    onProgress(0, true);
+    try {
+      const fixed = extractJson((await ask(buildFixPrompt(json, problems.slice(0, 20)))).text);
+      const after = validateSystem(fixed, opts);
+      if (after.length <= problems.length) { json = fixed; problems = after; }
+    } catch (e) {
+      if (e?.code === 'cancelled') throw e;
+    }
+  }
+  return { json, problems };
+}
+
+async function recognizePages(canvases, name, note = '') {
   const sample = window.claude?.use ? await window.claude.use('sample') : null;
   if (!sample) {
-    throw new Error('스캔·오선 악보 인식은 claude.ai에서 이 페이지를 열었을 때만 쓸 수 있습니다. 글자로 된 코드 악보 PDF는 어디서나 됩니다.');
+    throw new Error('오선 악보 인식은 claude.ai에서 이 페이지를 열었을 때만 쓸 수 있습니다. 글자로 된 코드 악보 PDF는 어디서나 됩니다.');
   }
   const limits = await sample.limits().catch(() => null);
   if (!limits?.images) throw new Error('이 화면에서는 악보 이미지를 Claude에게 보낼 수 없습니다.');
 
-  showPages(images);
+  showPages(await Promise.all(canvases.map((c) => canvasToBlob(c))));
   omrAbort = new AbortController();
-  const results = [];
-  let context = '';
+  const notes = note ? [note] : [];
+  let results = [];
   try {
-    for (let i = 0; i < images.length; i++) {
-      const label = images.length > 1 ? ` (${i + 1}/${images.length} 페이지)` : '';
-      setStatus(`악보를 읽는 중${label}… 페이지당 1~2분 걸릴 수 있어요.`);
-      const { text } = await sample(buildPrompt({ page: i + 1, pages: images.length, context }), {
-        images: [images[i]],
-        modelTier: 'complex',
-        signal: omrAbort.signal,
-        onText: ({ text: t }) => setStatus(`악보를 받아 적는 중${label}… ${Math.round(t.length / 100) / 10}k자`),
-      });
-      const score = extractJson(text);
-      results.push(score);
-      context = contextFrom(score);
+    // 1) 페이지 → 단 이미지
+    const tasks = [];
+    for (let i = 0; i < canvases.length; i++) {
+      setStatus(`${i + 1}/${canvases.length} 페이지: 오선 찾는 중…`);
+      tasks.push(...(await splitPage(sample, canvases[i], i + 1, canvases.length)));
     }
+
+    // 2) 단마다 받아 적기 (첫 단으로 파트 구성을 정한 뒤 나머지는 2개씩 동시에)
+    results = new Array(tasks.length);
+    const status = new Array(tasks.length).fill('');
+    const show = () => {
+      const done = results.filter(Boolean).length;
+      const active = status.map((s, i) => (s ? `${i + 1}번 ${s}` : '')).filter(Boolean).join(', ');
+      setStatus(`악보 읽는 중: ${done}/${tasks.length}단 완료${active ? ` (${active})` : ''} — 단마다 1~2분 걸려요.`);
+    };
+    let context = '';
+    const run = async (i) => {
+      status[i] = '읽는 중';
+      show();
+      const r = await transcribeSystem(sample, tasks[i], i + 1, tasks.length, context, (chars, fixing) => {
+        status[i] = fixing ? '검토 중' : `받아 적는 중 ${Math.round(chars / 100) / 10}k자`;
+        show();
+      });
+      status[i] = '';
+      results[i] = r;
+      show();
+      return r;
+    };
+    const firstResult = await run(0);
+    context = contextFrom(firstResult.json);
+    let next = 1;
+    const worker = async () => {
+      while (next < tasks.length) {
+        const i = next++;
+        try {
+          await run(i);
+        } catch (e) {
+          if (e?.code === 'cancelled' || e?.code === 'not_granted') throw e;
+          status[i] = '';
+          results[i] = { failed: true, error: e };
+        }
+      }
+    };
+    await Promise.all([worker(), worker()]);
   } catch (e) {
-    const msg = {
-      cancelled: '악보 인식을 멈췄습니다.',
-      not_granted: 'Claude 사용을 허용하지 않아 악보를 인식할 수 없습니다.',
-      rate_limited: '요청이 너무 많습니다. 잠시 뒤 다시 시도해 주세요.',
-      image_rejected: '이미지를 보낼 수 없습니다 (형식이나 크기 문제).',
-    }[e?.code] || `악보 인식에 실패했습니다: ${e?.message || e}`;
-    if (!results.length) { setStatus(''); omrAbort = null; throw new Error(msg); }
-    note = `${msg} 인식된 ${results.length}페이지만 보여 드립니다. ${note}`;
+    const done = (results || []).filter((r) => r && !r.failed);
+    if (!done.length) { omrAbort = null; setStatus(''); throw new Error(sampleMessage(e)); }
+    notes.push(`${sampleMessage(e)} 읽은 부분까지만 보여 드립니다.`);
   }
   omrAbort = null;
   setStatus('');
-  const xml = buildMusicXml(mergePages(results));
+
+  const ok = [];
+  const failed = [];
+  const unsure = [];
+  (results || []).forEach((r, i) => {
+    if (!r) return;
+    if (r.failed) { failed.push(i + 1); return; }
+    ok.push(r.json);
+    if (r.problems.length) unsure.push(i + 1);
+  });
+  if (failed.length) notes.push(`${failed.join(', ')}번째 단은 읽지 못해 빠졌습니다.`);
+  if (unsure.length) notes.push(`${unsure.join(', ')}번째 단은 박자가 맞지 않는 마디가 있어요. 특히 확인해 주세요.`);
+
+  const merged = mergeSystems(ok);
+  if (!merged.title) merged.title = name.replace(/\.[^.]+$/, '');
+  const xml = buildMusicXml(merged);
   loadXml(xml, name.replace(/\.[^.]+$/, '') + '.musicxml');
   $('omrNote').hidden = false;
-  $('omrNote').textContent = `자동 인식 결과입니다. 음표가 틀린 곳이 있을 수 있으니 아래 원본 페이지와 비교해 주세요. ${note}`.trim();
+  $('omrNote').textContent = `자동 인식 결과입니다. 틀린 음이 있을 수 있으니 아래 원본 페이지와 비교해 주세요. ${notes.join(' ')}`.trim();
 }
 
 function showPages(blobs) {
